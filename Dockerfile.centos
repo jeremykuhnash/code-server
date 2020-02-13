@@ -1,19 +1,19 @@
-FROM node:10.15.1
+FROM node:12.14.0
+ARG tag
+ARG githubToken
 
 # Install VS Code's deps. These are the only two it seems we need.
 RUN apt-get update && apt-get install -y \
 	libxkbfile-dev \
 	libsecret-1-dev
 
-# Ensure latest yarn.
-RUN npm install -g yarn@1.13
-
 WORKDIR /src
 COPY . .
 
-# In the future, we can use https://github.com/yarnpkg/rfcs/pull/53 to make yarn use the node_modules
-# directly which should be fast as it is slow because it populates its own cache every time.
-RUN yarn && NODE_ENV=production yarn task build:server:binary
+RUN yarn \
+	&& DRONE_TAG="$tag" MINIFY=true BINARY=true GITHUB_TOKEN="$githubToken" ./scripts/ci.bash \
+	&& rm -r /src/build \
+	&& rm -r /src/source
 
 ###################################################################################
 ### BUILD BASE IMAGE FOR RUNTIME
@@ -29,16 +29,7 @@ RUN yum makecache && yum install -y \
 	curl \
 	glibc-langpack-en \
 	wget && \
-	yum clean all && \
-	(cd /lib/systemd/system/sysinit.target.wants/; for i in *; do [ $i == systemd-tmpfiles-setup.service ] || rm -f $i; done); \
-	rm -f /lib/systemd/system/multi-user.target.wants/*; \
-	rm -f /etc/systemd/system/*.wants/*; \
-	rm -f /lib/systemd/system/local-fs.target.wants/*; \
-	rm -f /lib/systemd/system/sockets.target.wants/*udev*; \
-	rm -f /lib/systemd/system/sockets.target.wants/*initctl*; \
-	rm -f /lib/systemd/system/basic.target.wants/*; \
-	rm -f /lib/systemd/system/anaconda.target.wants/*;
-
+	yum clean all
 RUN yum reinstall -y glibc-common
 
 VOLUME [ “/sys/fs/cgroup” ]
@@ -66,11 +57,12 @@ WORKDIR /home/coder/project
 # So that they do not lose their data if they delete the container.
 VOLUME [ "/home/coder/project" ]
 
-
 ###################################################################################
 ##### INTEGRATE WITH BUILT CODE SERVER FROM FIRST CONTAINER
-COPY --from=0 /src/packages/server/cli-linux-x64 /usr/local/bin/code-server
-EXPOSE 8443
+COPY --from=0 /src/binaries/code-server /usr/local/bin/code-server
+EXPOSE 8080
+
+ENTRYPOINT ["dumb-init", "code-server", "--host", "0.0.0.0"]
 
 ENTRYPOINT ["/usr/local/bin/dumb-init", "code-server"]
 
